@@ -1,5 +1,7 @@
 .idea/
 *.iml
 
-/mise.toml
+mise.toml
+.env
 /examples/
+/config.toml

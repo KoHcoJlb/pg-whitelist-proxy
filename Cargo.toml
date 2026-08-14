@@ -1,0 +1,32 @@
+[package]
+name = "pg-whitelist-proxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.60", features = ["derive"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+tokio-util = "0.7.19"
+futures = "0.3.34"
+parking_lot = "0.12.4"
+
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+eyre = "0.6.14"
+derive_more = { version = "2.1.1", features = ["from", "debug", "display", "error"] }
+async-trait = "0.1.92"
+dotenvy = "0.15.7"
+serde = { version = "1.0.219", features = ["derive"] }
+toml = "0.9.12"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+
+aho-corasick = "1.1.5"
+pest = "2.8.8"
+pest_derive = "2.8.8"
+
+pgwire = { version = "0.40.5", default-features = false, features = ["client-api-ring", "server-api-ring", "pg-ext-types"] }
+pg_query = "6.2.0"
+
+[lints.clippy]
+needless_return_with_question_mark = "allow"
