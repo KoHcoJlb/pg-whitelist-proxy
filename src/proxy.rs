@@ -256,7 +256,6 @@ async fn proxy_connection(
                         if !is_admin
                             && let Err(err) = query_is_allowed(&whitelist, query)
                         {
-                            warn!(?err, %query, "query rejected by whitelist");
                             send_access_denied(&mut client).await?;
 
                             if is_extended {
@@ -319,17 +318,17 @@ fn query_is_allowed(whitelist: &Whitelist, query: &str) -> Result<()> {
     let whitelist = whitelist.read();
 
     if let Some(name) = QueryTemplateMatcher::query_name(query) {
-        return whitelist
-            .named
-            .get(name)
-            .ok_or_eyre("named query not found")?
-            .match_query(query)
-            .map_err(Into::into);
+        let res = whitelist.named.get(name).ok_or_eyre("named query not found")?.match_query(query);
+        if let Err(err) = &res {
+            warn!(name, ?err, "named query rejected by whitelist");
+        }
+        return res.map_err(Into::into);
     }
 
     if whitelist.unnamed.iter().any(|matcher| matcher.match_query(query).is_ok()) {
         Ok(())
     } else {
+        warn!(query, "no unnamed query matches");
         Err(eyre!("no unnamed query matches"))
     }
 }

@@ -27,16 +27,16 @@ pub struct MatchError {
     reason: MatchErrorReason,
 }
 
-#[derive(derive_more::Debug, Clone)]
+#[derive(Debug, Clone)]
 enum PatternRule {
-    Exact(#[debug(r#""{_0}""#)] String),
+    Exact(String),
     Token(Token),
     TokenAny(Vec<Token>),
 }
 
 pub(super) fn divergent_suffixes(expected: &str, actual: &str) -> Option<(String, String)> {
     const CONTEXT_CHARS: usize = 20;
-    const MARKER: &str = "<DIV>";
+    const MARKER: &str = "<DIVERGENCE>";
 
     if actual.starts_with(expected) {
         return None;
@@ -193,8 +193,8 @@ mod tests {
         assert_eq!(
             divergent_suffixes(&expected, &actual),
             Some((
-                "é1234567890123456789<DIV>expected".into(),
-                "é1234567890123456789<DIV>actual".into()
+                "é1234567890123456789<DIVERGENCE>expected".into(),
+                "é1234567890123456789<DIVERGENCE>actual".into()
             ))
         );
     }

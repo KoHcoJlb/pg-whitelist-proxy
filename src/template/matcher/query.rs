@@ -39,9 +39,9 @@ pub enum MatchQueryError {
     Scan(pg_query::Error),
 }
 
-#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum QueryPatternRule {
-    Exact(#[debug(r#""{_0}""#)] String),
+    Exact(String),
     Variable(String),
 }
 
@@ -274,8 +274,8 @@ mod tests {
         };
 
         assert!(matches!(err.reason, MatchErrorReason::ExactMismatch));
-        assert_eq!(err.expected, QueryPatternRule::Exact("SELECT <DIV>1".into()));
-        assert_eq!(err.actual, "SELECT <DIV>2");
+        assert_eq!(err.expected, QueryPatternRule::Exact("SELECT <DIVERGENCE>1".into()));
+        assert_eq!(err.actual, "SELECT <DIVERGENCE>2");
     }
 
     #[test]
