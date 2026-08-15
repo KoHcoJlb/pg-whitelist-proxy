@@ -31,7 +31,7 @@ pub struct MatchError {
 enum PatternRule {
     Exact(#[debug(r#""{_0}""#)] String),
     Token(Token),
-    Array(Token),
+    TokenAny(Vec<Token>),
 }
 
 pub(super) fn divergent_suffixes(expected: &str, actual: &str) -> Option<(String, String)> {
@@ -106,19 +106,25 @@ impl VariableTemplateMatcher {
             .flatten()
             .filter_map(|r| match r.as_rule() {
                 Rule::text => Some(Ok(PatternRule::Exact(r.as_str().into()))),
-                Rule::token | Rule::array => {
+                Rule::token => {
                     let inner = r.clone().into_inner().next()?;
 
                     let Some(token) = Token::from_str_name(inner.as_str()) else {
                         return Some(Err(eyre!("unknown token type: {inner}")));
                     };
 
-                    Some(Ok(match r.as_rule() {
-                        Rule::token => PatternRule::Token(token),
-                        Rule::array => PatternRule::Array(token),
-                        _ => unreachable!(),
-                    }))
+                    Some(Ok(PatternRule::Token(token)))
                 }
+                Rule::token_any => Some(
+                    r.into_inner()
+                        .map(|p| {
+                            let token_str = p.as_str();
+                            Token::from_str_name(token_str)
+                                .ok_or_else(|| eyre!("unknown token type: {token_str}"))
+                        })
+                        .collect::<Result<_, _>>()
+                        .map(PatternRule::TokenAny),
+                ),
                 _ => None,
             })
             .collect::<Result<_>>()?;
@@ -136,8 +142,10 @@ impl VariableTemplateMatcher {
                 reason: MatchErrorReason::QueryEof,
             })?;
 
+            let start_pos = *pos;
             let mut scan_token_iter =
-                scan_result.tokens.iter().skip_while(|t| t.start as usize != *pos);
+                scan_result.tokens.iter().skip_while(|t| (t.start as usize) < start_pos);
+
             let create_match_error =
                 |reason| MatchError { expected: rule.clone(), actual: query_substr.into(), reason };
 
@@ -157,31 +165,12 @@ impl VariableTemplateMatcher {
                         .map_err(create_match_error)?;
                     *pos = actual.end as usize;
                 }
-                PatternRule::Array(expected) => {
-                    let _ = consume_tokens(&mut scan_token_iter, &[Token::Array, Token::Ascii91])
-                        .map_err(create_match_error)?;
-
-                    let mut terminated = false;
+                PatternRule::TokenAny(expected) => {
                     for actual in scan_token_iter {
-                        if actual.token == Token::Ascii93 as i32 {
-                            terminated = true;
-                            *pos = actual.end as usize;
+                        if !expected.contains(&actual.token()) {
+                            *pos = actual.start as usize;
                             break;
                         }
-
-                        if actual.token == Token::Ascii44 as i32 {
-                            continue;
-                        }
-
-                        if &actual.token() != expected {
-                            return Err(create_match_error(MatchErrorReason::WrongTokenType(
-                                actual.token(),
-                            )));
-                        }
-                    }
-
-                    if !terminated {
-                        return Err(create_match_error(MatchErrorReason::ArrayNotTerminated));
                     }
                 }
             }
@@ -366,8 +355,8 @@ mod tests {
     }
 
     #[test]
-    fn extra_whitespace_before_placeholder_is_rejected() {
-        assert_not_full_match("SELECT @@Token(SCONST)@@", "SELECT  'hello'");
+    fn extra_whitespace_before_token_placeholder_are_accepted() {
+        assert_full_match("SELECT @@Token(SCONST)@@", "SELECT  'hello'");
     }
 
     #[test]
@@ -408,7 +397,7 @@ mod tests {
         let result = VariableTemplateMatcher::parse("SELECT @@Token(NOT_A_REAL_PG_TOKEN)@@");
         assert!(result.is_err());
 
-        let result = VariableTemplateMatcher::parse("SELECT @@Array(NOT_A_REAL_PG_TOKEN)@@");
+        let result = VariableTemplateMatcher::parse("SELECT @@TokenAny(NOT_A_REAL_PG_TOKEN)@@");
         assert!(result.is_err());
     }
 }

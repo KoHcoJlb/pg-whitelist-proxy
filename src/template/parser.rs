@@ -9,13 +9,13 @@ variable = _{
     "@@"
     ~ (
           token
-        | array
+        | token_any
     )
     ~ "@@"
 }
 
 token = { "Token(" ~ token_name ~ ")" }
-array = { "Array(" ~ token_name ~ ")" }
+token_any = { "TokenAny(" ~ (token_name ~ ","? ~ " "?)+ ~ ")" }
 
 token_name = { (ASCII_ALPHANUMERIC | "_")+ }
 
