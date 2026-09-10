@@ -21,6 +21,14 @@ struct Args {
     config: PathBuf,
 }
 
+fn load_env_if_empty(value: &mut String, name: &str) -> Result<()> {
+    if value.is_empty() {
+        *value = env::var(name).wrap_err_with(|| format!("{name} is not set"))?;
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     eyre::set_hook(Box::new(|_| Box::new(EyreHandler))).unwrap();
@@ -35,9 +43,8 @@ async fn main() -> Result<()> {
     let mut config: Config =
         toml::from_str(&config_toml).wrap_err("failed to parse configuration")?;
 
-    if config.grafana.token.is_empty() {
-        config.grafana.token = env::var("GRAFANA_TOKEN").wrap_err("GRAFANA_TOKEN is not set")?;
-    }
+    load_env_if_empty(&mut config.grafana.username, "GRAFANA_USERNAME")?;
+    load_env_if_empty(&mut config.grafana.password, "GRAFANA_PASSWORD")?;
 
     let provider = GrafanaProvider::new(&config.grafana)?;
     PgProxy::new(provider, config)?.run().await

@@ -65,7 +65,8 @@ struct DashboardResponse {
 pub struct GrafanaProvider {
     client: Client,
     base_url: Url,
-    token: String,
+    username: String,
+    password: String,
     dashboard_uids: Vec<String>,
 }
 
@@ -78,7 +79,8 @@ impl GrafanaProvider {
         Ok(Self {
             client: Client::new(),
             base_url,
-            token: config.token.clone(),
+            username: config.username.clone(),
+            password: config.password.clone(),
             dashboard_uids: config.dashboard_uids.clone(),
         })
     }
@@ -98,7 +100,7 @@ impl GrafanaProvider {
         let response = self
             .client
             .get(self.dashboard_url(uid)?)
-            .bearer_auth(&self.token)
+            .basic_auth(&self.username, Some(&self.password))
             .send()
             .await
             .wrap_err_with(|| format!("failed to fetch Grafana dashboard {uid:?}"))?

@@ -12,16 +12,16 @@ pub struct ProxyConfig {
 pub struct GrafanaConfig {
     pub url: String,
     #[serde(default)]
-    pub token: String,
+    pub username: String,
+    #[serde(default)]
+    pub password: String,
     pub dashboard_uids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     pub proxy: ProxyConfig,
-
     pub grafana: GrafanaConfig,
-
     #[serde(default)]
     pub variable_templates: HashMap<String, String>,
 }
