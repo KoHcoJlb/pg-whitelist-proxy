@@ -5,3 +5,4 @@ mise.toml
 .env
 /examples/
 /config.toml
+/opencode-container.toml
