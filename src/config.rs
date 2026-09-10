@@ -15,7 +15,6 @@ pub struct GrafanaConfig {
     pub username: String,
     #[serde(default)]
     pub password: String,
-    pub dashboard_uids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
