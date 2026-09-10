@@ -25,6 +25,12 @@ pub enum MatchErrorReason {
     UnmatchedSuffix,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum QueryPatternRule {
+    Exact(String),
+    Variable(String),
+}
+
 #[derive(Debug, Display, Error)]
 #[display(r#"expected={expected:?} actual="{actual}" reason={reason:?}"#)]
 pub struct MatchError {
@@ -39,12 +45,6 @@ pub enum MatchQueryError {
     Scan(pg_query::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum QueryPatternRule {
-    Exact(String),
-    Variable(String),
-}
-
 #[derive(Debug)]
 pub struct QueryTemplateMatcher {
     name: Option<String>,
@@ -53,6 +53,11 @@ pub struct QueryTemplateMatcher {
 }
 
 impl QueryTemplateMatcher {
+    pub fn query_name(query: &str) -> Option<&str> {
+        let first_line = query.lines().next()?.trim();
+        first_line.strip_prefix("--").map(str::trim)
+    }
+
     pub fn parse(
         template: &str, variable_templates: Arc<HashMap<String, VariableTemplateMatcher>>,
     ) -> Result<Self> {
@@ -101,11 +106,6 @@ impl QueryTemplateMatcher {
 
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
-    }
-
-    pub fn query_name(query: &str) -> Option<&str> {
-        let first_line = query.lines().next()?.trim();
-        first_line.strip_prefix("--").map(str::trim)
     }
 
     pub fn match_query(&self, query: &str) -> Result<(), MatchQueryError> {

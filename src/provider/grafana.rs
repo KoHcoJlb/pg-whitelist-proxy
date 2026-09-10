@@ -5,6 +5,63 @@ use serde::Deserialize;
 
 use crate::{config::GrafanaConfig, provider::QueryTemplateProvider};
 
+#[derive(Deserialize)]
+struct Target {
+    #[serde(default)]
+    hide: bool,
+
+    #[serde(rename = "rawSql")]
+    raw_sql: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Panel {
+    #[serde(default)]
+    panels: Vec<Panel>,
+
+    #[serde(default)]
+    targets: Vec<Target>,
+}
+
+impl Panel {
+    fn append_queries(&self, queries: &mut Vec<String>) {
+        for target in &self.targets {
+            if target.hide {
+                continue;
+            }
+
+            if let Some(query) = &target.raw_sql
+                && !query.trim().is_empty()
+            {
+                queries.push(query.clone());
+            }
+        }
+
+        for panel in &self.panels {
+            panel.append_queries(queries);
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct Dashboard {
+    #[serde(default)]
+    panels: Vec<Panel>,
+}
+
+impl Dashboard {
+    fn append_queries(&self, queries: &mut Vec<String>) {
+        for panel in &self.panels {
+            panel.append_queries(queries);
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DashboardResponse {
+    dashboard: Dashboard,
+}
+
 pub struct GrafanaProvider {
     client: Client,
     base_url: Url,
@@ -67,61 +124,4 @@ impl QueryTemplateProvider for GrafanaProvider {
 
         Ok(queries)
     }
-}
-
-#[derive(Deserialize)]
-struct DashboardResponse {
-    dashboard: Dashboard,
-}
-
-#[derive(Deserialize)]
-struct Dashboard {
-    #[serde(default)]
-    panels: Vec<Panel>,
-}
-
-impl Dashboard {
-    fn append_queries(&self, queries: &mut Vec<String>) {
-        for panel in &self.panels {
-            panel.append_queries(queries);
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct Panel {
-    #[serde(default)]
-    panels: Vec<Panel>,
-
-    #[serde(default)]
-    targets: Vec<Target>,
-}
-
-impl Panel {
-    fn append_queries(&self, queries: &mut Vec<String>) {
-        for target in &self.targets {
-            if target.hide {
-                continue;
-            }
-
-            if let Some(query) = &target.raw_sql
-                && !query.trim().is_empty()
-            {
-                queries.push(query.clone());
-            }
-        }
-
-        for panel in &self.panels {
-            panel.append_queries(queries);
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct Target {
-    #[serde(default)]
-    hide: bool,
-
-    #[serde(rename = "rawSql")]
-    raw_sql: Option<String>,
 }

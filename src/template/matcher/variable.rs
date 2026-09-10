@@ -19,19 +19,19 @@ pub enum MatchErrorReason {
     ArrayNotTerminated,
 }
 
+#[derive(Debug, Clone)]
+enum PatternRule {
+    Exact(String),
+    Token(Token),
+    TokenAny(Vec<Token>),
+}
+
 #[derive(Debug, Display, Error)]
 #[display(r#"expected={expected:?} actual="{actual}" reason={reason:?}"#)]
 pub struct MatchError {
     expected: PatternRule,
     actual: String,
     reason: MatchErrorReason,
-}
-
-#[derive(Debug, Clone)]
-enum PatternRule {
-    Exact(String),
-    Token(Token),
-    TokenAny(Vec<Token>),
 }
 
 pub(super) fn divergent_suffixes(expected: &str, actual: &str) -> Option<(String, String)> {

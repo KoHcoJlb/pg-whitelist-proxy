@@ -7,18 +7,18 @@ use tracing_subscriber::fmt;
 
 struct EyreHandler;
 
-#[derive(Parser)]
-struct Args {
-    #[arg(short, long, default_value = "config.toml")]
-    config: PathBuf,
-}
-
 impl eyre::EyreHandler for EyreHandler {
     fn debug(
         &self, error: &(dyn std::error::Error + 'static), f: &mut std::fmt::Formatter<'_>,
     ) -> std::fmt::Result {
         std::fmt::Debug::fmt(error, f)
     }
+}
+
+#[derive(Parser)]
+struct Args {
+    #[arg(short, long, default_value = "config.toml")]
+    config: PathBuf,
 }
 
 #[tokio::main]

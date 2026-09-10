@@ -40,78 +40,29 @@ impl QueryWhitelist {
 
 type Whitelist = Arc<RwLock<QueryWhitelist>>;
 
-pub struct PgProxy {
-    listen_addr: String,
-    server_addr: String,
-    provider: Arc<dyn QueryTemplateProvider>,
-    variable_templates: Arc<HashMap<String, VariableTemplateMatcher>>,
-}
+async fn fetch_whitelist(
+    provider: &dyn QueryTemplateProvider,
+    variable_templates: &Arc<HashMap<String, VariableTemplateMatcher>>,
+) -> Result<QueryWhitelist> {
+    let query_templates = provider.query_templates().await?;
+    let mut whitelist = QueryWhitelist::default();
 
-impl PgProxy {
-    pub fn new(provider: impl QueryTemplateProvider + 'static, config: Config) -> Result<Self> {
-        let variable_templates = Arc::new(
-            config
-                .variable_templates
-                .into_iter()
-                .map(|(name, template)| {
-                    let matcher = VariableTemplateMatcher::parse(&template)
-                        .wrap_err_with(|| format!("invalid variable template for {name:?}"))?;
-                    Ok((name, matcher))
-                })
-                .collect::<Result<_>>()?,
-        );
+    for query_template in query_templates {
+        let matcher = QueryTemplateMatcher::parse(&query_template, variable_templates.clone())
+            .wrap_err("invalid query template")?;
 
-        Ok(Self {
-            listen_addr: config.proxy.listen_addr,
-            server_addr: config.proxy.server_addr,
-            provider: Arc::new(provider),
-            variable_templates,
-        })
-    }
-
-    pub async fn run(self) -> Result<()> {
-        let initial_whitelist = fetch_whitelist(&*self.provider, &self.variable_templates)
-            .await
-            .wrap_err("failed to initialize query whitelist")?;
-        let whitelist = Arc::new(RwLock::new(initial_whitelist));
-        let query_count = whitelist.read().len();
-
-        info!(queries = query_count, "query whitelist initialized");
-
-        tokio::spawn(refresh_whitelist(
-            Arc::clone(&self.provider),
-            self.variable_templates,
-            Arc::clone(&whitelist),
-        ));
-
-        let listener = TcpListener::bind(&self.listen_addr)
-            .await
-            .wrap_err_with(|| format!("failed to bind proxy listener to {}", self.listen_addr))?;
-
-        info!(
-            listen_addr = %self.listen_addr,
-            server_addr = %self.server_addr,
-            "proxy listening"
-        );
-
-        loop {
-            let (client_socket, client_addr) =
-                listener.accept().await.wrap_err("failed to accept client connection")?;
-            let server_addr = self.server_addr.clone();
-            let whitelist = Arc::clone(&whitelist);
-
-            tokio::spawn(
-                async move {
-                    if let Err(err) =
-                        proxy_connection(client_socket, client_addr, &server_addr, whitelist).await
-                    {
-                        error!(?err, "connection failed");
-                    }
-                }
-                .instrument(info_span!("connection", %client_addr)),
-            );
+        if let Some(name) = matcher.name().map(str::to_owned) {
+            if whitelist.named.contains_key(&name) {
+                warn!(query_name = %name, "skipping duplicate named query template");
+                continue;
+            }
+            whitelist.named.insert(name, matcher);
+        } else {
+            whitelist.unnamed.push(matcher);
         }
     }
+
+    Ok(whitelist)
 }
 
 async fn refresh_whitelist(
@@ -137,29 +88,38 @@ async fn refresh_whitelist(
     }
 }
 
-async fn fetch_whitelist(
-    provider: &dyn QueryTemplateProvider,
-    variable_templates: &Arc<HashMap<String, VariableTemplateMatcher>>,
-) -> Result<QueryWhitelist> {
-    let query_templates = provider.query_templates().await?;
-    let mut whitelist = QueryWhitelist::default();
+fn query_is_allowed(whitelist: &Whitelist, query: &str) -> Result<()> {
+    let whitelist = whitelist.read();
 
-    for query_template in query_templates {
-        let matcher = QueryTemplateMatcher::parse(&query_template, variable_templates.clone())
-            .wrap_err("invalid query template")?;
-
-        if let Some(name) = matcher.name().map(str::to_owned) {
-            if whitelist.named.contains_key(&name) {
-                warn!(query_name = %name, "skipping duplicate named query template");
-                continue;
-            }
-            whitelist.named.insert(name, matcher);
-        } else {
-            whitelist.unnamed.push(matcher);
+    if let Some(name) = QueryTemplateMatcher::query_name(query) {
+        let res = whitelist.named.get(name).ok_or_eyre("named query not found")?.match_query(query);
+        if let Err(err) = &res {
+            warn!(name, ?err, "named query rejected by whitelist");
         }
+        return res.map_err(Into::into);
     }
 
-    Ok(whitelist)
+    if whitelist.unnamed.iter().any(|matcher| matcher.match_query(query).is_ok()) {
+        Ok(())
+    } else {
+        warn!(query, "no unnamed query matches");
+        Err(eyre!("no unnamed query matches"))
+    }
+}
+
+async fn send_access_denied(
+    client: &mut Framed<TcpStream, PgWireMessageServerCodec<()>>,
+) -> Result<()> {
+    let response = ErrorResponse::new(vec![
+        (b'S', "ERROR".into()),
+        (b'C', "42501".into()),
+        (b'M', "query is not permitted by the whitelist".into()),
+    ]);
+
+    client
+        .send(PgWireBackendMessage::ErrorResponse(response))
+        .await
+        .wrap_err("failed to send access denied response")
 }
 
 async fn proxy_connection(
@@ -314,36 +274,76 @@ async fn proxy_connection(
     Ok(())
 }
 
-fn query_is_allowed(whitelist: &Whitelist, query: &str) -> Result<()> {
-    let whitelist = whitelist.read();
-
-    if let Some(name) = QueryTemplateMatcher::query_name(query) {
-        let res = whitelist.named.get(name).ok_or_eyre("named query not found")?.match_query(query);
-        if let Err(err) = &res {
-            warn!(name, ?err, "named query rejected by whitelist");
-        }
-        return res.map_err(Into::into);
-    }
-
-    if whitelist.unnamed.iter().any(|matcher| matcher.match_query(query).is_ok()) {
-        Ok(())
-    } else {
-        warn!(query, "no unnamed query matches");
-        Err(eyre!("no unnamed query matches"))
-    }
+pub struct PgProxy {
+    listen_addr: String,
+    server_addr: String,
+    provider: Arc<dyn QueryTemplateProvider>,
+    variable_templates: Arc<HashMap<String, VariableTemplateMatcher>>,
 }
 
-async fn send_access_denied(
-    client: &mut Framed<TcpStream, PgWireMessageServerCodec<()>>,
-) -> Result<()> {
-    let response = ErrorResponse::new(vec![
-        (b'S', "ERROR".into()),
-        (b'C', "42501".into()),
-        (b'M', "query is not permitted by the whitelist".into()),
-    ]);
+impl PgProxy {
+    pub fn new(provider: impl QueryTemplateProvider + 'static, config: Config) -> Result<Self> {
+        let variable_templates = Arc::new(
+            config
+                .variable_templates
+                .into_iter()
+                .map(|(name, template)| {
+                    let matcher = VariableTemplateMatcher::parse(&template)
+                        .wrap_err_with(|| format!("invalid variable template for {name:?}"))?;
+                    Ok((name, matcher))
+                })
+                .collect::<Result<_>>()?,
+        );
 
-    client
-        .send(PgWireBackendMessage::ErrorResponse(response))
-        .await
-        .wrap_err("failed to send access denied response")
+        Ok(Self {
+            listen_addr: config.proxy.listen_addr,
+            server_addr: config.proxy.server_addr,
+            provider: Arc::new(provider),
+            variable_templates,
+        })
+    }
+
+    pub async fn run(self) -> Result<()> {
+        let initial_whitelist = fetch_whitelist(&*self.provider, &self.variable_templates)
+            .await
+            .wrap_err("failed to initialize query whitelist")?;
+        let whitelist = Arc::new(RwLock::new(initial_whitelist));
+        let query_count = whitelist.read().len();
+
+        info!(queries = query_count, "query whitelist initialized");
+
+        tokio::spawn(refresh_whitelist(
+            Arc::clone(&self.provider),
+            self.variable_templates,
+            Arc::clone(&whitelist),
+        ));
+
+        let listener = TcpListener::bind(&self.listen_addr)
+            .await
+            .wrap_err_with(|| format!("failed to bind proxy listener to {}", self.listen_addr))?;
+
+        info!(
+            listen_addr = %self.listen_addr,
+            server_addr = %self.server_addr,
+            "proxy listening"
+        );
+
+        loop {
+            let (client_socket, client_addr) =
+                listener.accept().await.wrap_err("failed to accept client connection")?;
+            let server_addr = self.server_addr.clone();
+            let whitelist = Arc::clone(&whitelist);
+
+            tokio::spawn(
+                async move {
+                    if let Err(err) =
+                        proxy_connection(client_socket, client_addr, &server_addr, whitelist).await
+                    {
+                        error!(?err, "connection failed");
+                    }
+                }
+                .instrument(info_span!("connection", %client_addr)),
+            );
+        }
+    }
 }
